@@ -13,11 +13,14 @@
  *   1) Given the backlinks file of URLs
  *   2) Filter out url domains that are irrelevant using URL filters file
  *   3) Scrape urls to extract extract emails
- *   4) Filter out email domains that are irrelevant uring email filters file (example: wix.com emails)
+ *   4) Filter out email domains that are irrelevant using email filters file (example: wix.com emails)
  *   5) De-duplicate emails in list
  *   6) Output csv file that contains linked website and email extracted
  *
  * Various options exist:
+ *   - Specify custom input urls filename
+ *   - Specify custom input/output emails filename
+ *   - Specify custom output csv filename
  *   - Specify custom url domains filter file
  *   - Specify custom email domains filter file
  *   - Run the scrape only to generate the raw email list
@@ -373,7 +376,6 @@ class ScrapeCommand {
     printLine("  --email-only                 - only process the emails csv file and output the result");
     printLine("  --no-url-filter              - do not apply the urls filter");
     printLine("  --no-email-filter            - do not apply the email domains filter");
-    printLine("  --no-dup-filter              - do not de-dup the emails in th the output file");
     printLine();
     printLine("  --urls <filepath>            - urls to process in tsv format, defaults to {$this->urlsFileName}");
     printLine("  --emails <filepath>          - raw email list to process in csv format, defaults to {$this->emailsFileName}");
