@@ -70,6 +70,8 @@ class ScrapeCommand {
   public $isEmailOnly = false;
   public $isNoUrlFilter = false;
   public $isNoEmailFilter = false;
+  public $urlsFilter = [];
+  public $emailsFilter = [];
 
   public $statsUrlsProcessed = 0;
   public $statsUrlsInvalid = 0;
@@ -119,17 +121,20 @@ class ScrapeCommand {
     $this->logLine('Processing complete', true);
     $end = time();
     $total = ($end - $start) < 120 ? ($end - $start) . ' seconds' : intval(($end - $start) / 600) * 10 . ' minutes';
-    $this->logLine("  Execution time: {$total}");
+    $this->logLine("  Execution time: {$total}", true);
 
     if (!$this->isEmailOnly) {
-      $this->logLine('Scrape complete, ' . number_format($this->statsUrlsProcessed) . ' urls processed', true);
+      $this->logLine('  URLs Processed:   ' . number_format($this->statsUrlsProcessed), true);
+      $this->logLine('  URLs Filtered:    ' . number_format($this->statsUrlsFiltered), true);
+      $this->logLine('  URLs Invalid:     ' . number_format($this->statsUrlsInvalid), true);
     }
 
     if (!$this->isScrapeOnly) {
-      $this->logLine('Email stats: ' . number_format($this->statsEmailsTotal) . ' total emails, ' . number_format($this->statsEmailsUnique) . ' unique emails', true);
+      $this->logLine('  Emails Processed: ' . number_format($this->statsEmailsTotal), true);
+      $this->logLine('  Emails Unique:    ' . number_format($this->statsEmailsUnique), true);
+      $this->logLine('  Emails Filtered:  ' . number_format($this->statsEmailsFiltered), true);
     }
   }
-
 
   /*
    * Helper Functions
@@ -148,7 +153,7 @@ class ScrapeCommand {
       $this->logErrorLine("Empty urls file!");
       $this->cleanupAndDie();
     }
-    $line = fgets($this->urlsFile);
+    $line = fgets($this->urlsFile); // Header line, ignore it
     if (feof($this->urlsFile)) {
       $this->logErrorLine("Invalid urls file format, only 1 line (assumed to be column headers)!");
       $this->cleanupAndDie();
@@ -159,7 +164,7 @@ class ScrapeCommand {
       // Reset the emailList output every time through the loop
       $emailList = [];
 
-      $line = fgets($this->urlsFile);
+      $line = trim(fgets($this->urlsFile));
       $columns = explode("\t", $line);
 
       $url = $columns[$this->urlColumn];
@@ -168,6 +173,15 @@ class ScrapeCommand {
       $validatedUrl = filter_var($url, FILTER_VALIDATE_URL);
 
       if ($validatedUrl) {
+        $urlComponents = parse_url($url);
+        $host = $urlComponents['host'] ?? null;
+
+        // If filtering out this URL, count it and continue
+        if ($host && array_key_exists($host, $this->urlsFilter)) {
+          $this->statsUrlsFiltered++;
+          continue;
+        }
+
         // Execute the scraper with this URL
         $scrapeCommand = self::SCRAPE_COMMAND;
         exec("{$scrapeCommand} {$validatedUrl}", $emailList, $resultCode);
@@ -215,8 +229,9 @@ class ScrapeCommand {
     // Loop over all the records (url & email)
     // Parse the URl into just the domain and use that an the email as array indexes
     // That will create a unique list of domains & urls
+    // This means that the last one in will win if there are dups
     while (!feof($this->emailsFile)) {
-      $line = fgets($this->emailsFile);
+      $line = trim(fgets($this->emailsFile));
       $columns = explode(',', $line);
 
       if (count($columns) != 2) {
@@ -227,22 +242,35 @@ class ScrapeCommand {
       $url = $columns[0];
       $email = $columns[1];
       $urlComponents = parse_url($url);
-      
-      if ($urlComponents === false || !array_key_exists('host', $urlComponents)) {
-        $this->statsEmailsInvalid++;
-      } else {
-        $host = $urlComponents['host'];
-        $uniqueEmails[$host][$email] = '1';
 
-        $this->statsEmailsTotal++;
+      // Skip this one if there is a problem
+      if ($urlComponents === false || !array_key_exists('host', $urlComponents) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $this->statsEmailsInvalid++;
+        continue;
       }
+
+      // Save the data in an array and let the keys handle de-dup process
+      $host = $urlComponents['host'];
+      $emailComponents = explode('@', $email);
+      $emailDomain = array_pop($emailComponents);
+
+      // Skip this one if filtering out the email domain (also check host in case one slipped through)
+      if (array_key_exists($emailDomain, $this->emailsFilter) || array_key_exists($host, $this->urlsFilter)) {
+        $this->statsEmailsFiltered++;
+        continue;
+      }
+
+      // Finally, add this to the list of unique emails
+      $uniqueEmails[$host][$email] = $emailDomain;
+
+      $this->statsEmailsTotal++;
     }
 
     // Loop over all the unique items and add them to the output file
-    fputcsv($this->outputFile, ['Host', 'Email']);
+    fputcsv($this->outputFile, ['Host', 'Email', 'EmailDomain']);
     foreach ($uniqueEmails AS $uniqueHost => $emails) {
-      foreach ($emails AS $uniqueEmail => $dummy) {
-        fputcsv($this->outputFile, [$uniqueHost, $uniqueEmail]);
+      foreach ($emails AS $uniqueEmail => $emailDomain) {
+        fputcsv($this->outputFile, [$uniqueHost, $uniqueEmail, $emailDomain]);
         $this->statsEmailsUnique++;
       }
     }
@@ -266,18 +294,18 @@ class ScrapeCommand {
     }
 
     // No need to filer urls
-    if ($this->isNoUrlFilter || $this->isEmailOnly) {
+    if ($this->isNoUrlFilter) {
       $this->urlFiltersFileName = null;
     }
 
     // No need to filter emails
-    if ($this->isNoEmailFilter || $this->isScrapeOnly) {
+    if ($this->isNoEmailFilter) {
       $this->emailFiltersFileName = null;
     }
 
     // Check that necessary files exist or can be created
     if ($this->isEmailOnly) {
-      // The emails file should already exist or there is a problem
+      // The emails file already exists or there is a problem
       $this->emailsFile = $this->openFile($this->emailsFileName);
     } else {
       // We are going to scrape, make sure the urls file exists
@@ -292,14 +320,30 @@ class ScrapeCommand {
       $this->outputFile = $this->createFile($this->outputFileName);
     }
 
-    // Open the url filter file
-    if ($this->urlFiltersFileName) {
+    // Open the url filter file and fill up the filter array
+    if (!$this->isNoUrlFilter && $this->urlFiltersFileName) {
       $this->urlFiltersFile = $this->openFile($this->urlFiltersFileName);
+
+      while (!feof($this->urlFiltersFile)) {
+        // Read in the line, it should just be a domain
+        $filterDomain = trim(fgets($this->urlFiltersFile));
+
+        // Add the item to the filter
+        $this->urlsFilter[$filterDomain] = 1;
+      }
     }
 
-    // Open the email filter file
-    if ($this->emailFiltersFileName) {
+    // Open the email filter file and fill up the filter array
+    if (!$this->isNoEmailFilter && $this->emailFiltersFileName) {
       $this->emailFiltersFile = $this->openFile($this->emailFiltersFileName);
+
+      while (!feof($this->emailFiltersFile)) {
+        // Read in the line, it should just be a domain
+        $filterDomain = trim(fgets($this->emailFiltersFile));
+
+        // Add the item to the filter
+        $this->emailsFilter[$filterDomain] = 1;
+      }
     }
   }
 

@@ -1,1 +1,13 @@
-google.com
+aeroleads.com
+qq.com
+sentry-viewer.wixpress.com
+sentry.wixpress.com
+sentry.io
+example.com
+domain.com
+techcrunch.com
+yourdomain.com
+yourschool.com
+yourhomehealth.com
+yourcompany.com
+ngrok.io
