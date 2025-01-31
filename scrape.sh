@@ -24,7 +24,7 @@ n_opt=100000000;
 
 #columnm of URL
 #url_col=10;
-url_col=3;
+url_col=2;
 #column for key
 key_col=2;
 
@@ -48,18 +48,22 @@ if [[ ! -f "$file" ]]; then
     help_info
 fi
 
-
 i=0
 while read line; do
-#echo $line
 
+    DELIM=','  # Set to ',' for comma or $'\t' for tab
 
-#echo $(cut -d$'\t' -f 6 <<< "$line")
-#exit;
+    url=$(cut -d"$DELIM" -f ${url_col} <<< "$line")
+    key=$(cut -d"$DELIM" -f ${key_col} <<< "$line")
 
-    url=$(cut -d$'\t' -f ${url_col} <<< "$line")
-    key=$(cut -d$'\t' -f ${key_col} <<< "$line")
-
+    # Check if the URL starts with http:// or https://
+    if [[ "$url" =~ ^https?:// ]]; then
+        >&2 echo "URL is already complete: $url"
+    else
+        # Add https:// at the beginning of the URL
+        url="https://$url"
+        >&2 echo "Updated URL: $url"
+    fi
 
     url_regex='(https?|ftp|file)://[-A-Za-z0-9\+&@#/%?=~_|!:,.;]*[-A-Za-z0-9\+&@#/%=~_|]'
     if [[ ${url} =~ ${url_regex} ]]; then
@@ -71,7 +75,6 @@ while read line; do
         >&2 echo "Invalid URL: $url"
         continue
     fi
-
 
     # run scraper
     ("$SCRAPER" -w "$url") | while read email; do
